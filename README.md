@@ -50,7 +50,7 @@ To get everything just up and running, install all of the required packages ment
 version from github:
 
 ```
-$ git clone https://github.com/Crapworks/RESTlos.git
+$ git clone https://github.com/thornung/RESTlos.git
 ```
 
 In the newly created directory, edit the file `config.json` to fit your nagios/icinga/whatever configuration. 

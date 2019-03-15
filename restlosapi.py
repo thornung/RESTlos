@@ -11,15 +11,16 @@ from werkzeug.exceptions import default_exceptions, BadRequest
 from utils import Config
 from utils.authentication import Authentify
 
-from subprocess import check_output, CalledProcessError
+from subprocess import check_output, CalledProcessError, call
 
-from pynag import Model, Parsers
+from pynag import Model, Parsers, Control, Utils
 from json import dumps
 from cgi import escape
 
 import os
 import logging
 import logging.config
+#logging.basicConfig(filename='/tmp/restlosapi_debug.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 config = Config(os.path.join(os.path.dirname(__file__), 'config.json'))
 VERSION="0.3"
@@ -108,7 +109,7 @@ class NagiosControlView(MethodView):
         MethodView.__init__(self, *args, **kwargs)
 
         try:
-            self.command_file = Model.Control.Command.find_command_file(config['nagios_main_cfg'])
+            self.command_file = Control.Command.find_command_file(config['nagios_main_cfg'])
         except Exception, err:
             abort(500, 'unable to locate command file: %s' % (str(err), ))
 
@@ -150,8 +151,13 @@ class NagiosControlView(MethodView):
 
     def _restart(self):
         logging.warn("[audit] [user: %s] triggered the restart command" % (request.authorization.username), )
-        Model.Control.Command.restart_program(command_file=self.command_file)
-        return { 'result': 'successfully sent command to command file' }
+        try:
+                result=call("sudo sv restart nagios", shell=True)
+        except Exception, err:
+                return { 'result': err }
+        else:
+                return { 'result': result }
+
 
     def post(self):
         if len(request.args.keys()) != 1:
@@ -236,13 +242,17 @@ class NagiosObjectView(MethodView):
             return Response(dumps(result, indent=None if request.is_xhr else 2), mimetype='application/json')
 
     def delete(self):
-        validate = self.endpoints.validate(self.endpoint, request.args)
+        data = request.json
+	for item in data:
+		logging.debug('[delete] item: %s' % (item))
+	validate = self.endpoints.validate(self.endpoint, request.args)
         if not validate.has_key(200):
             abort(*validate.items()[0])
         endpoint_objects = getattr(Model, self.endpoint.capitalize()).objects
-
-        query = self._build_query(request.args)
-
+	logging.debug("[delete] endpoint_objects: %s" % (endpoint_objects))
+#        query = self._build_query(request.args)
+        unique_key = self.endpoints.get_unique_key(self.endpoint)
+	query = { unique_key: item[unique_key] }
         try:
             objects = endpoint_objects.filter(**query)
         except IOError, err:
@@ -250,9 +260,11 @@ class NagiosObjectView(MethodView):
         except:
             abort(500)
 
-        unique_key = self.endpoints.get_unique_key(self.endpoint)
+        #unique_key = self.endpoints.get_unique_key(self.endpoint)
+	logging.debug("[delete] unique_key: %s" % (unique_key))
         results = []
         for obj in objects:
+	    logging.debug("[delete] Object is %s" % (obj))
             try:
                 obj.delete()
             except Exception, err:
@@ -292,10 +304,13 @@ class NagiosObjectView(MethodView):
     def _save_or_update(self, item):
             # does this object already exist
             unique_key = self.endpoints.get_unique_key(self.endpoint)
+	    logging.debug('[_save_or_update] unique_key: %s ' % (unique_key))
             if unique_key in item.keys():
                 query = { unique_key: item[unique_key] }
+		logging.debug("[_save_or_update] query: %s" % (query))
                 try:
                     endpoint_object = getattr(Model, self.endpoint.capitalize()).objects.filter(**query)
+		    logging.debug('[_save_or_update] endpoint_object: %s ' % (endpoint_object))
                 except IOError, err:
                     abort(500, "error opening config files: %s" % (str(err), ))
                 except:
@@ -308,15 +323,20 @@ class NagiosObjectView(MethodView):
             else:
                 return { 500: 'required key for %s object not set: %s' % (self.endpoint, unique_key) }
 
+	    logging.debug('[_save_or_update] object: %s | key: %s' % (self.endpoint, unique_key))
             validate = self.endpoints.validate(self.endpoint, item)
             if not validate.has_key(200):
                 return validate
 
             for key, value in item.iteritems():
+		logging.debug('item %s is %s' % (key, value))
+		if key == 'host_name':
+			savefile=config['output_dir'] + '/' + self.endpoint + '/' + value + '.cfg'
                 endpoint_object.set_attribute(key, value)
-
+		
             try:
-                endpoint_object.save()
+		logging.debug("[_save_or_update] savefile = %s" % (savefile))
+                endpoint_object.save(savefile)
             except Exception, err:
                 logging.debug("[audit] [user: %s] failed to store %s object %s: %s" % (self.username, self.endpoint, item[unique_key], str(err)))
                 return { 500: 'unable to save %s object %s: %s' % (self.endpoint, item[unique_key], str(err)) }
