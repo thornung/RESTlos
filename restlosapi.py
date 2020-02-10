@@ -242,17 +242,13 @@ class NagiosObjectView(MethodView):
             return Response(dumps(result, indent=None if request.is_xhr else 2), mimetype='application/json')
 
     def delete(self):
-        data = request.json
-	for item in data:
-		logging.debug('[delete] item: %s' % (item))
 	validate = self.endpoints.validate(self.endpoint, request.args)
         if not validate.has_key(200):
             abort(*validate.items()[0])
         endpoint_objects = getattr(Model, self.endpoint.capitalize()).objects
 	logging.debug("[delete] endpoint_objects: %s" % (endpoint_objects))
-#        query = self._build_query(request.args)
+        query = self._build_query(request.args)
         unique_key = self.endpoints.get_unique_key(self.endpoint)
-	query = { unique_key: item[unique_key] }
         try:
             objects = endpoint_objects.filter(**query)
         except IOError, err:
@@ -260,7 +256,6 @@ class NagiosObjectView(MethodView):
         except:
             abort(500)
 
-        #unique_key = self.endpoints.get_unique_key(self.endpoint)
 	logging.debug("[delete] unique_key: %s" % (unique_key))
         results = []
         for obj in objects:
